@@ -113,6 +113,46 @@ describe Redis::Lock do
     redis.del("lock:test")
   end
   
+  it "can extend a lock we own" do
+    lock = redis.lock "test", :lock_duration => 10
+    lock.extend_lock 30
+    
+    redis.ttl("lock:test").should eq(30)
+
+    lock.unlock
+  end
+  
+  it "can't extend a lock we don't own" do
+    lock1 = redis.lock "test", :lock_duration => 1
+    lock2 = redis.lock "test"
+    
+    expect { lock1.extend_lock 30 }.to raise_exception
+    
+    lock1.unlock
+    lock2.unlock
+  end
+  
+  it "will retry the lock extension if the key changes while we are doing the extension" do
+    callback = Proc.new do |redis|
+      redis.incr "retry_count"
+
+      # mess with the lock using another client
+      unless redis.get("retry_count").to_i > 1
+        Redis.new.expires "lock:test", 60
+      end
+    end
+    
+    redis.set "retry_count", 0
+    lock = redis.lock "test", :lock_duration => 10
+    lock.before_extend_callback = callback
+    lock.extend_lock 30
+    
+    redis.get("retry_count").should eq(2.to_s)
+    lock.should be_locked
+
+    lock.unlock
+  end
+  
   it "can run a lot of times without any conflicts" do
     redis.set "num_locks", 0
     threads = []

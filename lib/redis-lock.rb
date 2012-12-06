@@ -16,6 +16,7 @@ class Redis
     attr_reader :lock_duration
     attr_reader :logger
     attr_accessor :before_delete_callback
+    attr_accessor :before_extend_callback
     
     def initialize(redis, lock_name, options = {})
       @redis = redis
@@ -75,6 +76,40 @@ class Redis
       return false
     end
     
+    def extend_lock(extend_by = 10)
+      begin
+        with_watch do
+          if lock_owner?
+            log :debug, "we are the lock owner - extending lock by #{extend_by} seconds"
+            
+            # check if we want to do a callback
+            if before_extend_callback
+              log :debug, "calling callback"
+              before_extend_callback.call(redis)
+            end
+            
+            redis.multi do |multi|
+              multi.expire lockname, extend_by
+            end
+            
+            # we extended the lock, return the lock
+            return self
+          end
+
+          log :debug, "we aren't the lock owner - raising LockError"
+
+          # we aren't the lock owner anymore - raise LockError
+          raise LockError.new("unable to extend #{lockname} - no longer the lock owner")
+        end
+      rescue LockError => e
+        raise e
+      rescue StandardError => e
+        log :warn, "#{lockname} changed while attempting to release key - retrying"
+        # try extending the lock again, just in case
+        extend_lock extend_by
+      end
+    end
+    
     def release_lock
       # we are going to watch the lock key while attempting to remove it, so we can
       # retry removing the lock if the lock is changed while we are removing it.
@@ -85,6 +120,8 @@ class Redis
         # make sure we still own the lock
         if lock_owner?
           log :debug, "we are the lock owner"
+          
+          # check if we want to do a callback
           if before_delete_callback
             log :debug, "calling callback"
             before_delete_callback.call(redis)
@@ -116,6 +153,7 @@ class Redis
     end
     
     def lock_owner?
+      log :debug, "our id: #{id} - lock owner: #{redis.get(lockname)}"
       redis.get(lockname) == id
     end
     

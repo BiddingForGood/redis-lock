@@ -63,9 +63,13 @@ If the lock can't be acquired before the timeout, a LockError will be raised:
     lock = redis.lock "my_key", :lock_duration => 30
     redis.lock "my_key", :acquire_timeout => 1 # raises a LockError after one second of attempting to acquire the lock
 
-## Todo
+You can extend a lock if you are the owner:
 
-Still need to provide the ability to extend your own lock
+    redis = Redis.new
+    lock = redis.lock "my_key"
+    lock.extend_lock 30 # extend lock_duration to be 30 seconds from now
+
+If you are no longer the lock owner, a LockError will be raised.
 
 ## Contributing
 
